@@ -151,6 +151,8 @@
 #  define XSUM_ARCH "s390x"
 #elif defined(__s390__)
 #  define XSUM_ARCH "s390"
+#elif defined(__riscv)
+#  define XSUM_ARCH "riscv"
 #else
 #  define XSUM_ARCH "unknown"
 #endif
