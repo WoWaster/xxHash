@@ -3332,7 +3332,7 @@ enum XXH_VECTOR_TYPE /* fake enum */ {
 #  elif XXH_VECTOR == XXH_SVE   /* sve */
 #     define XXH_ACC_ALIGN 64
 # elif XXH_VECTOR == XXH_RVV   /* rvv */
-#     define XXH_ACC_ALIGN 64 /* We assume that we can have 512 bit vector registers*/
+#     define XXH_ACC_ALIGN 16
 #  endif
 #endif
 
@@ -4953,39 +4953,47 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret)
 {
-    XXH_ASSERT((((size_t)acc) & 63) == 0);
-    {   // Try to set vector lenght to 512 bits.
-        // If this length is unavailable, then maximum available will be used
-        size_t vl = vsetvl_e64m1(8);
+    XXH_ASSERT((((size_t)acc) & 15) == 0);
+    {   // Implicitly use vectors of 128 bits
+        size_t vl = vsetvl_e32m1(4);
 
-        uint64_t* const xacc = (uint64_t*) acc;
-        uint64_t* const xinput = (uint64_t*) input;
-        uint64_t* const xsecret = (uint64_t*) secret;
-        uint64_t swap_mask[8] = {1, 0, 3, 2, 5, 4, 7, 6};
-        vuint64m1_t xswap_mask = vle64_v_u64m1(swap_mask, vl);
+        uint32_t* const xacc = (uint32_t*) acc;
+        uint32_t* const xinput = (uint32_t*) input;
+        uint32_t* const xsecret = (uint32_t*) secret;
+        uint32_t swap_mask[4] = {2, 3, 0, 1};
+        vuint32m1_t xswap_mask = vle32_v_u32m1(swap_mask, vl);
+        uint32_t rshift_mask[4] = {1, 1, 3, 3};
+        vuint32m1_t xrshift_mask = vle32_v_u32m1(rshift_mask, vl);
+        uint32_t lshift_mask[4] = {0, 0, 2, 2};
+        vuint32m1_t xlshift_mask = vle32_v_u32m1(lshift_mask, vl);
+        uint8_t merge_mask[4] = {1, 0, 1, 0};
+        vbool32_t xmerge_mask = vlm_v_b32(merge_mask, vl);
 
         size_t i;
-        // vuint64m1_t is sizeless.
-        // But we can assume that vl can be only 2, 4 or 8
-        for(i=0; i < XXH_STRIPE_LEN/(8 * vl); i++){
+        // vuint32m1_t is sizeless.
+        // But we can assume that vl can be only 4.
+        for(i=0; i < XXH_STRIPE_LEN/(4 * vl); i++){
             /* data_vec    = input[i]; */
-            vuint64m1_t data_vec = vle64_v_u64m1(xinput + vl * i, vl);
+            vuint32m1_t data_vec = vle32_v_u32m1(xinput + vl * i, vl);
             /* key_vec     = secret[i]; */
-            vuint64m1_t key_vec = vle64_v_u64m1(xsecret + vl * i, vl);
+            vuint32m1_t key_vec = vle32_v_u32m1(xsecret + vl * i, vl);
             /* data_key    = data_vec ^ key_vec; */
-            vuint64m1_t data_key = vxor(data_vec, key_vec, vl);
+            vuint32m1_t data_key = vxor_vv_u32m1(data_vec, key_vec, vl);
             /* data_key_lo = data_key >> 32; */
-            vuint64m1_t data_key_lo = vsrl(data_key, 32, vl);
+            vuint32m1_t data_key_lo = vrgather_vv_u32m1(data_key, xrshift_mask, vl);
+            vuint32m1_t product_lo = vmul_vv_u32m1(data_key, data_key_lo, vl);
+            vuint32m1_t product_hi = vmulhu_vv_u32m1(data_key, data_key_lo, vl);
             /* product     = (data_key & 0xffffffff) * (data_key_lo & 0xffffffff); */
             // TODO: Try to find SSE2 analog
-            vuint64m1_t product = vmul(vand(data_key, 0xffffffff, vl), vand(data_key_lo, 0xffffffff, vl), vl);
+            vuint32m1_t product_hi_sl = vrgather_vv_u32m1(product_hi, xlshift_mask, vl);
+            vuint32m1_t product = vmerge_vvm_u32m1(xmerge_mask, product_hi_sl, product_lo, vl);
             /* acc_vec = xacc[i]; */
-            vuint64m1_t acc_vec = vle64_v_u64m1(xacc + vl * i, vl);
-            acc_vec = vadd(acc_vec, product, vl);
+            vuint32m1_t acc_vec = vle32_v_u32m1(xacc + vl * i, vl);
+            acc_vec = vadd_vv_u32m1(acc_vec, product, vl);
             /* swap high and low halves */
-            vuint64m1_t data_swap = vrgather(data_vec, xswap_mask, vl);
-            acc_vec = vadd(acc_vec, data_swap, vl);
-            vse64_v_u64m1(xacc + vl * i, acc_vec, vl);
+            vuint32m1_t data_swap = vrgather_vv_u32m1(data_vec, xswap_mask, vl);
+            acc_vec = vadd_vv_u32m1(acc_vec, data_swap, vl);
+            vse32_v_u32m1(xacc + vl * i, acc_vec, vl);
         }   }
 }
 XXH_FORCE_INLINE XXH3_ACCUMULATE_TEMPLATE(rvv)
@@ -4993,11 +5001,9 @@ XXH_FORCE_INLINE XXH3_ACCUMULATE_TEMPLATE(rvv)
 XXH_FORCE_INLINE void
 XXH3_scrambleAcc_rvv(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
-    XXH_ASSERT((((size_t)acc) & 63) == 0);
+    XXH_ASSERT((((size_t)acc) & 15) == 0);
 
-    {   // Try to set vector lenght to 512 bits.
-        // If this length is unavailable, then maximum available will be used
-        size_t vl = vsetvl_e64m1(8);
+    {   size_t vl = vsetvl_e64m1(2);
         uint64_t* const xacc = (uint64_t*) acc;
         uint64_t* const xsecret = (uint64_t*) secret;
 
@@ -5010,16 +5016,16 @@ XXH3_scrambleAcc_rvv(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
         for(i=0; i < XXH_STRIPE_LEN/(8 * vl); i++){
             /* xacc[i] ^= (xacc[i] >> 47) */
             vuint64m1_t acc_vec = vle64_v_u64m1(xacc + vl * i, vl);
-            vuint64m1_t shifted = vsrl(acc_vec, 47, vl);
-            vuint64m1_t data_vec = vxor(acc_vec, shifted, vl);
+            vuint64m1_t shifted = vsrl_vx_u64m1(acc_vec, 47, vl);
+            vuint64m1_t data_vec = vxor_vv_u64m1(acc_vec, shifted, vl);
             /* xacc[i] ^= xsecret[i]; */
             vuint64m1_t key_vec = vle64_v_u64m1(xsecret + vl * i, vl); // TODO: Align??!
-            vuint64m1_t data_key = vxor(data_vec, key_vec, vl);
+            vuint64m1_t data_key = vxor_vv_u64m1(data_vec, key_vec, vl);
 
             /* xacc[i] *= XXH_PRIME32_1; */
-            vuint64m1_t prod_even = vmul(vand(data_key, 0xffffffff, vl), vprime, vl);
-            vuint64m1_t prod_odd = vmul(vsrl(data_key, 32, vl), vprime, vl);
-            vuint64m1_t prod = vadd(prod_even, vsll(prod_odd, 32, vl), vl);
+            vuint64m1_t prod_even = vmul_vv_u64m1(vand_vx_u64m1(data_key, 0xffffffff, vl), vprime, vl);
+            vuint64m1_t prod_odd = vmul_vv_u64m1(vsrl_vx_u64m1(data_key, 32, vl), vprime, vl);
+            vuint64m1_t prod = vadd_vv_u64m1(prod_even, vsll_vx_u64m1(prod_odd, 32, vl), vl);
             vse64_v_u64m1(xacc + vl * i, prod, vl);
         }    }
 }
