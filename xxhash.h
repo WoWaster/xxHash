@@ -4966,7 +4966,7 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
         vuint32m1_t xrshift_mask = vle32_v_u32m1(rshift_mask, vl);
         uint32_t lshift_mask[4] = {0, 0, 2, 2};
         vuint32m1_t xlshift_mask = vle32_v_u32m1(lshift_mask, vl);
-        uint8_t merge_mask[4] = {1, 0, 1, 0};
+        uint8_t merge_mask[1] = {0b0101};
         vbool32_t xmerge_mask = vlm_v_b32(merge_mask, vl);
 
         size_t i;
@@ -4981,18 +4981,18 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
             vuint32m1_t data_key = vxor_vv_u32m1(data_vec, key_vec, vl);
             /* data_key_lo = data_key >> 32; */
             vuint32m1_t data_key_lo = vrgather_vv_u32m1(data_key, xrshift_mask, vl);
+            /* product     = (data_key & 0xffffffff) * (data_key_lo & 0xffffffff); */
             vuint32m1_t product_lo = vmul_vv_u32m1(data_key, data_key_lo, vl);
             vuint32m1_t product_hi = vmulhu_vv_u32m1(data_key, data_key_lo, vl);
-            /* product     = (data_key & 0xffffffff) * (data_key_lo & 0xffffffff); */
-            // TODO: Try to find SSE2 analog
             vuint32m1_t product_hi_sl = vrgather_vv_u32m1(product_hi, xlshift_mask, vl);
             vuint32m1_t product = vmerge_vvm_u32m1(xmerge_mask, product_hi_sl, product_lo, vl);
             /* acc_vec = xacc[i]; */
             vuint32m1_t acc_vec = vle32_v_u32m1(xacc + vl * i, vl);
-            acc_vec = vadd_vv_u32m1(acc_vec, product, vl);
             /* swap high and low halves */
             vuint32m1_t data_swap = vrgather_vv_u32m1(data_vec, xswap_mask, vl);
             acc_vec = vadd_vv_u32m1(acc_vec, data_swap, vl);
+            acc_vec = vadd_vv_u32m1(acc_vec, product, vl);
+            acc_vec = vrgather_vv_u32m1(acc_vec, xswap_mask, vl);
             vse32_v_u32m1(xacc + vl * i, acc_vec, vl);
         }   }
 }
@@ -5266,7 +5266,7 @@ typedef void (*XXH3_f_initCustomSecret)(void* XXH_RESTRICT, xxh_u64);
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_rvv
 #define XXH3_accumulate     XXH3_accumulate_rvv
-#define XXH3_scrambleAcc    XXH3_scrambleAcc_rvv
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
 #define XXH3_initCustomSecret XXH3_initCustomSecret_scalar // TODO
 
 #else /* scalar */
