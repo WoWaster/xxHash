@@ -5022,30 +5022,60 @@ XXH3_scrambleAcc_rvv(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ASSERT((((size_t)acc) & 15) == 0);
 
-    size_t vl = vsetvl_e64m1(2);
-    uint64_t* const xacc = (uint64_t*) acc;
-    uint64_t* const xsecret = (uint64_t*) secret;
+    size_t vl = vsetvl_e32m1(VL);
+    const uint32_t* xacc = (uint32_t*) acc;
+    const uint32_t* xsecret = (uint32_t*) secret;
 
-    uint64_t prime[8] = {XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1};
-    vuint64m1_t vprime = vle64_v_u64m1(prime, vl);
+    uint32_t prime_even[VL] = {XXH_PRIME32_1, 0, XXH_PRIME32_1, 0};
+    vuint32m1_t vprime_even = vle32_v_u32m1(prime_even, VL);
+    uint32_t prime_odd[VL] = {0, XXH_PRIME32_1, 0, XXH_PRIME32_1};
+    vuint32m1_t vprime_odd = vle32_v_u32m1(prime_odd, VL);
+    uint32_t rshift_mask[VL] = {1, 1, 3, 3};
+    vuint32m1_t xrshift_mask = vle32_v_u32m1(rshift_mask, VL);
+    uint32_t lshift_mask[VL] = {0, 0, 2, 2};
+    vuint32m1_t xlshift_mask = vle32_v_u32m1(lshift_mask, VL);
+    uint32_t zero_vector[VL] = {0, 0, 0, 0};
+    vuint32m1_t xzero_vector = vle32_v_u32m1(zero_vector, VL);
+    uint32_t merge_mask[VL] = {1, 0, 1, 0};
+    vuint32m1_t merge_mask_int = vle32_v_u32m1(merge_mask, VL);
+    vbool32_t xmerge_mask = vmseq_vx_u32m1_b32(merge_mask_int, 1, VL);
+    vbool32_t xzero_mask = vmclr_m_b32(VL);
+    uint32_t swap_mask32[VL] = {1, 0, 3, 2};
+    vuint32m1_t xswap_mask32 = vle32_v_u32m1(swap_mask32, VL);
 
-    size_t i;
-    // vuint64m1_t is sizeless.
-    // But we can assume that vl can be only 2, 4 or 8
-    for(i=0; i < XXH_STRIPE_LEN/(8 * vl); i++){
+    // vuint32m1_t is sizeless.
+    // But we can assume that vl can be only 4.
+    for(size_t i = 0; i < XXH_STRIPE_LEN/(4 * VL); i++){
         /* xacc[i] ^= (xacc[i] >> 47) */
-        vuint64m1_t acc_vec = vle64_v_u64m1(xacc + vl * i, vl);
-        vuint64m1_t shifted = vsrl_vx_u64m1(acc_vec, 47, vl);
-        vuint64m1_t data_vec = vxor_vv_u64m1(acc_vec, shifted, vl);
+        vuint32m1_t acc_vec = vle32_v_u32m1(xacc + VL * i, VL);
+        vuint32m1_t shifted = vrgather_vv_u32m1(acc_vec, xrshift_mask, VL);
+        shifted = vsrl_vx_u32m1(shifted, 15, VL);
+        // shifted = vmerge_vvm_u32m1(xmerge_mask, shifted, xzero_vector, VL);
+        shifted = vmerge_vvm_u32m1(xmerge_mask, xzero_vector, shifted, VL);
+        vuint32m1_t data_vec = vxor_vv_u32m1(acc_vec, shifted, VL);
         /* xacc[i] ^= xsecret[i]; */
-        vuint64m1_t key_vec = vle64_v_u64m1(xsecret + vl * i, vl); // TODO: Align??!
-        vuint64m1_t data_key = vxor_vv_u64m1(data_vec, key_vec, vl);
+        vuint32m1_t key_vec = vle32_v_u32m1(xsecret + VL * i, VL);
+        vuint32m1_t data_key = vxor_vv_u32m1(data_vec, key_vec, VL);
 
         /* xacc[i] *= XXH_PRIME32_1; */
-        vuint64m1_t prod_even = vmul_vv_u64m1(vand_vx_u64m1(data_key, 0xffffffff, vl), vprime, vl);
-        vuint64m1_t prod_odd = vmul_vv_u64m1(vsrl_vx_u64m1(data_key, 32, vl), vprime, vl);
-        vuint64m1_t prod = vadd_vv_u64m1(prod_even, vsll_vx_u64m1(prod_odd, 32, vl), vl);
-        vse64_v_u64m1(xacc + vl * i, prod, vl);
+        vuint32m1_t prod_even_hi = vmulhu_vv_u32m1(data_key, vprime_even, VL);
+        vuint32m1_t prod_even_lo = vmul_vv_u32m1(data_key, vprime_even, VL);
+        vuint32m1_t prod_even_hi_sl = vrgather_vv_u32m1(prod_even_hi, xlshift_mask, VL);
+        vuint32m1_t prod_even = vmerge_vvm_u32m1(xmerge_mask, prod_even_hi_sl, prod_even_lo, VL);
+
+        vuint32m1_t prod_odd_hi = vmulhu_vv_u32m1(data_key, vprime_odd, VL);
+        vuint32m1_t prod_odd_lo = vmul_vv_u32m1(data_key, vprime_odd, VL);
+        vuint32m1_t prod_odd_hi_sl = vrgather_vv_u32m1(prod_odd_hi, xlshift_mask, VL);
+        vuint32m1_t prod_odd = vmerge_vvm_u32m1(xmerge_mask, prod_odd_lo, prod_odd_hi_sl, VL);
+
+        vbool32_t carry_bits = vmadc_vvm_u32m1_b32(prod_even, prod_odd, xzero_mask, VL);
+        carry_bits = vmand_mm_b32(carry_bits, xmerge_mask, VL);
+        vuint32m1_t prod = vadd_vv_u32m1(prod_even, prod_odd, VL);
+        prod = vrgather_vv_u32m1(prod, xswap_mask32, VL);
+        prod = vadc_vvm_u32m1(prod, xzero_vector, carry_bits, VL);
+        prod = vrgather_vv_u32m1(prod, xswap_mask32, VL);
+        /* xacc[i] = prod; */
+        vse32_v_u32m1(xacc + VL * i, prod, VL);
     }
 }
 
@@ -5285,7 +5315,7 @@ typedef void (*XXH3_f_initCustomSecret)(void* XXH_RESTRICT, xxh_u64);
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_rvv
 #define XXH3_accumulate     XXH3_accumulate_rvv
-#define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_rvv
 #define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
 
 #else /* scalar */
