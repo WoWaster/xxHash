@@ -4967,16 +4967,18 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
     vuint32m1_t xrshift_mask = vle32_v_u32m1(rshift_mask, VL);
     uint32_t lshift_mask[VL] = {0, 0, 2, 2};
     vuint32m1_t xlshift_mask = vle32_v_u32m1(lshift_mask, VL);
-    uint8_t merge_mask[1] = {0b0101};
-    vbool32_t xmerge_mask = vlm_v_b32(merge_mask, VL);
+    uint32_t merge_mask[VL] = {1, 0, 1, 0};
+    vuint32m1_t merge_mask_int = vle32_v_u32m1(merge_mask, VL);
+    vbool32_t xmerge_mask = vmseq_vx_u32m1_b32(merge_mask_int, 1, VL);
+    vbool32_t xzero_mask = vmclr_m_b32(VL);
     uint32_t swap_mask32[VL] = {1, 0, 3, 2};
     vuint32m1_t xswap_mask32 = vle32_v_u32m1(swap_mask32, VL);
-    uint32_t zero_vector[VL] = {0,0,0,0};
+    uint32_t zero_vector[VL] = {0, 0, 0, 0};
     vuint32m1_t xzero_vector = vle32_v_u32m1(zero_vector, VL);
 
     // vuint32m1_t is sizeless.
     // But we can assume that vl can be only 4.
-    for(size_t i=0; i < XXH_STRIPE_LEN/(4 * VL); i++){
+    for(size_t i = 0; i < XXH_STRIPE_LEN/(4 * VL); i++){
         /* data_vec    = input[i]; */
         vuint32m1_t data_vec = vle32_v_u32m1(xinput + VL * i, VL);
         /* key_vec     = secret[i]; */
@@ -4995,7 +4997,7 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
         /* swap high and low halves */
         vuint32m1_t data_swap = vrgather_vv_u32m1(data_vec, xswap_mask64, VL);
         /* acc_vec = vadd_vv_u32m1(acc_vec, data_swap, VL); */
-        vbool32_t carry_bits = vmadc_vv_u32m1_b32(acc_vec, data_swap, VL);
+        vbool32_t carry_bits = vmadc_vvm_u32m1_b32(acc_vec, data_swap, xzero_mask, VL);
         carry_bits = vmand_mm_b32(carry_bits, xmerge_mask, VL);
         acc_vec = vadd_vv_u32m1(acc_vec, data_swap, VL);
         acc_vec = vrgather_vv_u32m1(acc_vec, xswap_mask32, VL);
@@ -5003,7 +5005,7 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
         acc_vec = vrgather_vv_u32m1(acc_vec, xswap_mask32, VL);
 
         // acc_vec = vadd_vv_u32m1(acc_vec, product, VL);
-        carry_bits = vmadc_vv_u32m1_b32(acc_vec, product, VL);
+        carry_bits = vmadc_vvm_u32m1_b32(acc_vec, product, xzero_mask, VL);
         carry_bits = vmand_mm_b32(carry_bits, xmerge_mask, VL);
         acc_vec = vadd_vv_u32m1(acc_vec, product, VL);
         acc_vec = vrgather_vv_u32m1(acc_vec, xswap_mask32, VL);
