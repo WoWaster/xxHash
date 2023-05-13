@@ -4955,7 +4955,7 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
 {
     XXH_ASSERT((((size_t)acc) & 15) == 0);
     // Implicitly use vectors of 128 bits
-    size_t vl = vsetvl_e32m1(VL);
+    // size_t vl = vsetvl_e32m1(VL); Probably is not needed :)
 
     const uint32_t* xacc = (uint32_t*) acc;
     const uint32_t* xinput = (uint32_t*) input;
@@ -4980,9 +4980,9 @@ XXH3_accumulate_512_rvv(  void* XXH_RESTRICT acc,
     // But we can assume that vl can be only 4.
     for(size_t i = 0; i < XXH_STRIPE_LEN/(4 * VL); i++){
         /* data_vec    = input[i]; */
-        vuint32m1_t data_vec = vle32_v_u32m1(xinput + VL * i, VL);
+        vuint32m1_t data_vec = vreinterpret_v_u8m1_u32m1(vle8_v_u8m1((uint8_t*)(xinput + VL * i), VL * 4));
         /* key_vec     = secret[i]; */
-        vuint32m1_t key_vec = vle32_v_u32m1(xsecret + VL * i, VL);
+        vuint32m1_t key_vec = vreinterpret_v_u8m1_u32m1(vle8_v_u8m1((uint8_t*)(xsecret + VL * i), VL * 4));
         /* data_key    = data_vec ^ key_vec; */
         vuint32m1_t data_key = vxor_vv_u32m1(data_vec, key_vec, VL);
         /* data_key_lo = data_key >> 32; */
@@ -5054,7 +5054,7 @@ XXH3_scrambleAcc_rvv(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
         shifted = vmerge_vvm_u32m1(xmerge_mask, xzero_vector, shifted, VL);
         vuint32m1_t data_vec = vxor_vv_u32m1(acc_vec, shifted, VL);
         /* xacc[i] ^= xsecret[i]; */
-        vuint32m1_t key_vec = vle32_v_u32m1(xsecret + VL * i, VL);
+        vuint32m1_t key_vec = vreinterpret_v_u8m1_u32m1(vle8_v_u8m1((uint8_t*)(xsecret + VL * i), VL * 4));
         vuint32m1_t data_key = vxor_vv_u32m1(data_vec, key_vec, VL);
 
         /* xacc[i] *= XXH_PRIME32_1; */
