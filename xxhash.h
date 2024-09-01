@@ -3747,6 +3747,8 @@ XXH_PUBLIC_API XXH64_hash_t XXH64_hashFromCanonical(XXH_NOESCAPE const XXH64_can
 #    include <immintrin.h>
 #  elif defined(__SSE2__)
 #    include <emmintrin.h>
+#  elif defined(__riscv_vector)
+#    include <riscv_vector.h>
 #  endif
 #endif
 
@@ -3869,6 +3871,7 @@ enum XXH_VECTOR_TYPE /* fake enum */ {
                        */
     XXH_VSX    = 5,  /*!< VSX and ZVector for POWER8/z13 (64-bit) */
     XXH_SVE    = 6,  /*!< SVE for some ARMv8-A and ARMv9-A */
+    XXH_RVV    = 7, /*!< RVV for RISC-V */
 };
 /*!
  * @ingroup tuning
@@ -3891,6 +3894,7 @@ enum XXH_VECTOR_TYPE /* fake enum */ {
 #  define XXH_NEON   4
 #  define XXH_VSX    5
 #  define XXH_SVE    6
+#  define XXH_RVV    7
 #endif
 
 #ifndef XXH_VECTOR    /* can be defined on command line */
@@ -3915,6 +3919,8 @@ enum XXH_VECTOR_TYPE /* fake enum */ {
      || (defined(__s390x__) && defined(__VEC__)) \
      && defined(__GNUC__) /* TODO: IBM XL */
 #    define XXH_VECTOR XXH_VSX
+#  elif defined(__riscv_vector)
+#    define XXH_VECTOR XXH_RVV
 #  else
 #    define XXH_VECTOR XXH_SCALAR
 #  endif
@@ -3951,6 +3957,8 @@ enum XXH_VECTOR_TYPE /* fake enum */ {
 #  elif XXH_VECTOR == XXH_AVX512  /* avx512 */
 #     define XXH_ACC_ALIGN 64
 #  elif XXH_VECTOR == XXH_SVE   /* sve */
+#     define XXH_ACC_ALIGN 64
+#  elif XXH_VECTOR == XXH_RVV   /* rvv */
 #     define XXH_ACC_ALIGN 64
 #  endif
 #endif
@@ -4252,6 +4260,34 @@ do { \
     acc = svadd_u64_x(mask, acc, mul);                               \
 } while (0)
 #endif /* XXH_VECTOR == XXH_SVE */
+
+#if XXH_VECTOR == XXH_RVV
+#define ACCRND_RVV(acc, offset, vl) \
+do { \
+    vuint64m1_t input_vec = __riscv_vreinterpret_v_u8m1_u64m1(__riscv_vle8_v_u8m1((uint8_t*)(xinput + offset), vl * 8));            \
+    vuint64m1_t secret_vec = __riscv_vreinterpret_v_u8m1_u64m1(__riscv_vle8_v_u8m1((uint8_t*)(xsecret + offset), vl * 8));          \
+    vuint64m1_t mixed = __riscv_vxor_vv_u64m1(input_vec, secret_vec, vl);          \
+    vuint64m1_t swapped = __riscv_vrgather_vv_u64m1(input_vec, swap_mask_vec, vl); \
+    vuint64m1_t mixed_lo = __riscv_vand_vx_u64m1(mixed, 0xFFFFFFFFUL, vl);         \
+    vuint64m1_t mixed_hi = __riscv_vsrl_vx_u64m1(mixed, 32, vl);                   \
+    vuint64m1_t mul =__riscv_vmadd_vv_u64m1(mixed_hi, mixed_lo, swapped, vl);      \
+    acc = __riscv_vadd_vv_u64m1(acc, mul, vl);                                     \
+} while (0)
+#endif /* XXH_VECTOR == XXH_RVV */
+
+// #if XXH_VECTOR == XXH_RVV
+// #define ACCRND_RVV(acc, offset, vl) \
+// do { \
+//     vuint64m1_t input_vec = __riscv_vle64_v_u64m1(xinput + offset, vl);            \
+//     vuint64m1_t secret_vec = __riscv_vle64_v_u64m1(xsecret + offset, vl);            \
+//     vuint64m1_t mixed = __riscv_vxor_vv_u64m1(input_vec, secret_vec, vl);          \
+//     vuint64m1_t swapped = __riscv_vrgather_vv_u64m1(input_vec, swap_mask_vec, vl); \
+//     vuint64m1_t mixed_lo = __riscv_vand_vx_u64m1(mixed, 0xFFFFFFFFUL, vl);         \
+//     vuint64m1_t mixed_hi = __riscv_vsrl_vx_u64m1(mixed, 32, vl);                   \
+//     vuint64m1_t mul =__riscv_vmadd_vv_u64m1(mixed_hi, mixed_lo, swapped, vl);      \
+//     acc = __riscv_vadd_vv_u64m1(acc, mul, vl);                                     \
+// } while (0)
+// #endif /* XXH_VECTOR == XXH_RVV */
 
 /* prefetch
  * can be disabled, by declaring XXH_NO_PREFETCH build macro */
@@ -5589,6 +5625,56 @@ XXH3_accumulate_sve(xxh_u64* XXH_RESTRICT acc,
 
 #endif
 
+#if (XXH_VECTOR == XXH_RVV)
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512_rvv( void* XXH_RESTRICT acc,
+                   const void* XXH_RESTRICT input,
+                   const void* XXH_RESTRICT secret)
+{
+    size_t vl_var = __riscv_vsetvl_e64m1(8); // 512 / 64 = 8
+
+    uint64_t* xacc = (uint64_t*) acc;
+    const uint64_t* xinput = (uint64_t*) input;
+    const uint64_t* xsecret = (uint64_t*) secret;
+
+    uint64_t swap_mask[8] = {1, 0, 3, 2, 5, 4, 7, 6};
+    vuint64m1_t swap_mask_vec = __riscv_vle64_v_u64m1(swap_mask, vl_var);
+
+    if (vl_var == 2) { // 128 bit wide RVV unit
+        size_t vl = 2;
+        vuint64m1_t acc0 = __riscv_vle64_v_u64m1(xacc + 0, vl);
+        vuint64m1_t acc1 = __riscv_vle64_v_u64m1(xacc + 2, vl);
+        vuint64m1_t acc2 = __riscv_vle64_v_u64m1(xacc + 4, vl);
+        vuint64m1_t acc3 = __riscv_vle64_v_u64m1(xacc + 6, vl);
+        ACCRND_RVV(acc0, 0, vl);
+        ACCRND_RVV(acc1, 2, vl);
+        ACCRND_RVV(acc2, 4, vl);
+        ACCRND_RVV(acc3, 6, vl);
+        __riscv_vse64_v_u64m1(xacc + 0, acc0, vl);
+        __riscv_vse64_v_u64m1(xacc + 2, acc1, vl);
+        __riscv_vse64_v_u64m1(xacc + 4, acc2, vl);
+        __riscv_vse64_v_u64m1(xacc + 6, acc3, vl);
+    } else if (vl_var == 4) { // 256 bit wide RVV unit
+        size_t vl = 4;
+        vuint64m1_t acc0 = __riscv_vle64_v_u64m1(xacc + 0, vl);
+        vuint64m1_t acc1 = __riscv_vle64_v_u64m1(xacc + 4, vl);
+        ACCRND_RVV(acc0, 0, vl);
+        ACCRND_RVV(acc1, 4, vl);
+        __riscv_vse64_v_u64m1(xacc + 0, acc0, vl);
+        __riscv_vse64_v_u64m1(xacc + 4, acc1, vl);
+    } else { // 512 bit wide RVV unit
+        size_t vl = 8;
+        vuint64m1_t acc0 = __riscv_vle64_v_u64m1(xacc, vl);
+        ACCRND_RVV(acc0, 0, vl);
+         __riscv_vse64_v_u64m1(xacc, acc0, vl);
+    }
+}
+
+XXH_FORCE_INLINE XXH3_ACCUMULATE_TEMPLATE(rvv)
+
+#endif
+
 /* scalar variants - universal */
 
 #if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
@@ -5816,6 +5902,12 @@ typedef void (*XXH3_f_initCustomSecret)(void* XXH_RESTRICT, xxh_u64);
 #elif (XXH_VECTOR == XXH_SVE)
 #define XXH3_accumulate_512 XXH3_accumulate_512_sve
 #define XXH3_accumulate     XXH3_accumulate_sve
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
+
+#elif (XXH_VECTOR == XXH_RVV)
+#define XXH3_accumulate_512 XXH3_accumulate_512_rvv
+#define XXH3_accumulate     XXH3_accumulate_rvv
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
 #define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
 
