@@ -4275,20 +4275,6 @@ do { \
 } while (0)
 #endif /* XXH_VECTOR == XXH_RVV */
 
-// #if XXH_VECTOR == XXH_RVV
-// #define ACCRND_RVV(acc, offset, vl) \
-// do { \
-//     vuint64m1_t input_vec = __riscv_vle64_v_u64m1(xinput + offset, vl);            \
-//     vuint64m1_t secret_vec = __riscv_vle64_v_u64m1(xsecret + offset, vl);            \
-//     vuint64m1_t mixed = __riscv_vxor_vv_u64m1(input_vec, secret_vec, vl);          \
-//     vuint64m1_t swapped = __riscv_vrgather_vv_u64m1(input_vec, swap_mask_vec, vl); \
-//     vuint64m1_t mixed_lo = __riscv_vand_vx_u64m1(mixed, 0xFFFFFFFFUL, vl);         \
-//     vuint64m1_t mixed_hi = __riscv_vsrl_vx_u64m1(mixed, 32, vl);                   \
-//     vuint64m1_t mul =__riscv_vmadd_vv_u64m1(mixed_hi, mixed_lo, swapped, vl);      \
-//     acc = __riscv_vadd_vv_u64m1(acc, mul, vl);                                     \
-// } while (0)
-// #endif /* XXH_VECTOR == XXH_RVV */
-
 /* prefetch
  * can be disabled, by declaring XXH_NO_PREFETCH build macro */
 #if defined(XXH_NO_PREFETCH)
