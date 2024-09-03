@@ -5661,9 +5661,9 @@ XXH3_accumulate_512_rvv(void* XXH_RESTRICT acc,
 
 XXH_FORCE_INLINE void
 XXH3_accumulate_rvv(xxh_u64* XXH_RESTRICT acc,
-               const xxh_u8* XXH_RESTRICT input,
-               const xxh_u8* XXH_RESTRICT secret,
-               size_t nbStripes)
+                const xxh_u8* XXH_RESTRICT input,
+                const xxh_u8* XXH_RESTRICT secret,
+                size_t nbStripes)
 {
     if (nbStripes != 0) {
         size_t vl_var = __riscv_vsetvl_e64m1(8); // 512 / 64 = 8
