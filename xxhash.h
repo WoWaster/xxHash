@@ -5614,9 +5614,9 @@ XXH3_accumulate_sve(xxh_u64* XXH_RESTRICT acc,
 #if (XXH_VECTOR == XXH_RVV)
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512_rvv( void* XXH_RESTRICT acc,
-                   const void* XXH_RESTRICT input,
-                   const void* XXH_RESTRICT secret)
+XXH3_accumulate_512_rvv(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret)
 {
     size_t vl_var = __riscv_vsetvl_e64m1(8); // 512 / 64 = 8
 
