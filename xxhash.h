@@ -5639,10 +5639,10 @@ XXH3_accumulate_512_rvv( void* XXH_RESTRICT acc,
     const uint64_t* xsecret = (uint64_t*) secret;
 
     uint64_t swap_mask[8] = {1, 0, 3, 2, 5, 4, 7, 6};
-    vuint64m1_t swap_mask_vec = __riscv_vle64_v_u64m1(swap_mask, vl_var);
 
     if (vl_var == 2) { // 128 bit wide RVV unit
         size_t vl = 2;
+        vuint64m1_t swap_mask_vec = __riscv_vle64_v_u64m1(swap_mask, vl);
         vuint64m1_t acc0 = __riscv_vle64_v_u64m1(xacc + 0, vl);
         vuint64m1_t acc1 = __riscv_vle64_v_u64m1(xacc + 2, vl);
         vuint64m1_t acc2 = __riscv_vle64_v_u64m1(xacc + 4, vl);
@@ -5657,6 +5657,7 @@ XXH3_accumulate_512_rvv( void* XXH_RESTRICT acc,
         __riscv_vse64_v_u64m1(xacc + 6, acc3, vl);
     } else if (vl_var == 4) { // 256 bit wide RVV unit
         size_t vl = 4;
+        vuint64m1_t swap_mask_vec = __riscv_vle64_v_u64m1(swap_mask, vl);
         vuint64m1_t acc0 = __riscv_vle64_v_u64m1(xacc + 0, vl);
         vuint64m1_t acc1 = __riscv_vle64_v_u64m1(xacc + 4, vl);
         ACCRND_RVV(acc0, 0, vl);
@@ -5665,6 +5666,7 @@ XXH3_accumulate_512_rvv( void* XXH_RESTRICT acc,
         __riscv_vse64_v_u64m1(xacc + 4, acc1, vl);
     } else { // 512 bit wide RVV unit
         size_t vl = 8;
+        vuint64m1_t swap_mask_vec = __riscv_vle64_v_u64m1(swap_mask, vl);
         vuint64m1_t acc0 = __riscv_vle64_v_u64m1(xacc, vl);
         ACCRND_RVV(acc0, 0, vl);
          __riscv_vse64_v_u64m1(xacc, acc0, vl);
